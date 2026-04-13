@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Battle Lite</title>
+    <style>
+        body { background: #f0f2f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; }
+        
+        .container { 
+            display: grid; 
+            grid-template-columns: 2fr 1fr; /* Поле на 2/3 страницы */
+            gap: 20px; 
+            max-width: 1400px; 
+            margin: 0 auto;
+            height: 85vh;
+        }
+
+        .game-card { 
+            background: white; padding: 20px; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            display: flex; flex-direction: column; align-items: center;
+        }
+
+        /* Фиксированное поле с сеткой */
+        #canvas-container {
+            position: relative;
+            background: #fff;
+            border: 2px solid #ddd;
+            /* Рассчитываем размер: 120 пикселей * 6 пикселей на каждый = 720px в ширину */
+            width: 720px; 
+            height: 480px;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        /* Слой сетки поверх холста */
+        .grid-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none; /* Пропускает клики сквозь себя */
+            background-size: 6px 6px; /* Должно совпадать с масштабом отображения */
+            background-image: 
+                linear-gradient(to right, rgba(0,0,0,0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(0,0,0,0.05) 1px, transparent 1px);
+        }
+
+        /* Чат */
+        .chat-card { 
+            background: white; padding: 20px; border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            display: flex; flex-direction: column; 
+        }
+        #chat-messages { flex-grow: 1; overflow-y: auto; margin-bottom: 15px; border: 1px solid #f0f0f0; padding: 10px; border-radius: 8px; }
+        .msg { margin-bottom: 10px; font-size: 14px; line-height: 1.4; }
+        .msg-time { color: #aaa; font-size: 11px; }
+
+        /* Палитра */
+        .palette { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; justify-content: center; }
+        .color-dot { width: 32px; height: 32px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: 0.2s; }
+        .color-dot:hover { transform: translateY(-2px); }
+        .color-dot.active { border-color: #007bff; box-shadow: 0 0 10px rgba(0,123,255,0.3); }
+
+        input { padding: 10px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="game-card">
+        <h2 style="margin-top:0">Pixel Battle 120×80</h2>
+        <div id="canvas-container">
+            <canvas id="canvas" width="120" height="80"></canvas>
+            <div class="grid-overlay"></div>
+        </div>
+        <div class="palette" id="palette"></div>
+    </div>
+
+    <div class="chat-card">
+        <h3>Отзывы</h3>
+        <div id="chat-messages"></div>
+        <div style="display:flex; gap:10px;">
+            <input type="text" id="chat-input" placeholder="Ваш отзыв..." style="flex-grow:1">
+            <button id="send-btn">Отправить</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const WIDTH = 120, HEIGHT = 80;
+    const canvas = document.getElementById('canvas'), ctx = canvas.getContext('2d');
+    const chatBox = document.getElementById('chat-messages'), chatInput = document.getElementById('chat-input');
+    const colors = ['#FFFFFF', '#E4E4E4', '#888888', '#222222', '#FFA7D1', '#E50000', '#E59500', '#A06A42', '#E5D900', '#94E044', '#02BE01', '#00D3DD', '#0083C7', '#0000EA', '#CF6EE4', '#820080'];
+    let selectedColor = 3;
+
+    // Палитра
+    colors.forEach((c, i) => {
+        const d = document.createElement('div');
+        d.className = 'color-dot' + (i === selectedColor ? ' active' : '');
+        d.style.background = c;
+        d.onclick = () => {
+            document.querySelectorAll('.color-dot').forEach(el => el.classList.remove('active'));
+            d.classList.add('active');
+            selectedColor = i;
+        };
+        document.getElementById('palette').appendChild(d);
+    });
+
+    const ws = new WebSocket(`ws://${location.host}`);
+    ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m.type === 'init') {
+            const raw = atob(m.data);
+            for (let i = 0; i < raw.length; i++) draw(i % WIDTH, Math.floor(i / WIDTH), raw.charCodeAt(i));
+            m.chat.forEach(addChatMessage);
+        } else if (m.type === 'update') {
+            draw(m.x, m.y, m.color);
+        } else if (m.type === 'chat') {
+            addChatMessage(m);
+        }
+    };
+
+    function draw(x, y, c) {
+        ctx.fillStyle = colors[c];
+        ctx.fillRect(x, y, 1, 1);
+    }
+    
+    function addChatMessage(m) {
+        const div = document.createElement('div');
+        div.className = 'msg';
+        div.innerHTML = `<span class="msg-time">${m.time}</span><br><strong>Гость:</strong> ${m.text}`;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // Рисование (только клик, без перетаскивания)
+    canvas.onmousedown = (e) => {
+        const r = canvas.getBoundingClientRect();
+        const x = Math.floor((e.clientX - r.left) / (r.width / WIDTH));
+        const y = Math.floor((e.clientY - r.top) / (r.height / HEIGHT));
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+            ws.send(JSON.stringify({ type: 'pixel', x, y, color: selectedColor }));
+        }
+    };
+
+    // Чат
+    document.getElementById('send-btn').onclick = sendChat;
+    chatInput.onkeydown = (e) => { if(e.key === 'Enter') sendChat(); };
+    function sendChat() {
+        if (!chatInput.value.trim()) return;
+        ws.send(JSON.stringify({ type: 'chat', text: chatInput.value }));
+        chatInput.value = '';
+    }
+</script>
+
+</body>
+</html>
